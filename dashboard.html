@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Personal Stock Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f8fa; margin:0; }
+    .banner {
+      background: linear-gradient(90deg,#1c92d2 0%,#f2fcfe 100%);
+      color: #222;
+      text-align: center;
+      font-size: 2rem;
+      padding: 32px 0 14px 0;
+      letter-spacing: 2px;
+      margin-bottom: 12px;
+      font-weight: bold;
+      text-shadow: 1px 2px 8px #fff3, 0px 1px 0 #fff;
+      border-bottom: 3px solid #5bb4ea;
+    }
+    .vis-container {
+      display: flex; gap: 32px; justify-content: center; margin-bottom: 20px;
+    }
+    .chart-wrapper { background: #fff; border-radius:14px; box-shadow:0 2px 10px #0001; padding:16px;}
+    .btn-close { background: #e14; color:white; border:none; border-radius:4px; padding:2px 8px; cursor:pointer;}
+    .stock-list-modal {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: #0008; display: flex; align-items: center; justify-content: center; z-index:1000;
+    }
+    .stock-table-container {
+      background: #fff; border-radius:14px; box-shadow:0 2px 16px #0003;
+      max-width: 640px; padding:24px 36px; position:relative;
+      animation: modalin 0.2s ease;
+    }
+    @keyframes modalin { from {transform:scale(0.7);opacity:0;} to {transform:scale(1);opacity:1;} }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+    th, td { padding: 10px 14px; text-align: left; }
+    th {
+      background: #5bb4ea; color: #fff; letter-spacing: 1px; font-size: 1.06rem;
+      border-top-left-radius:8px; border-top-right-radius:8px; border:none;
+    }
+    tr:nth-child(even) { background: #f1f6fa; }
+    tr:nth-child(odd) { background: #e8f1f8; }
+    td { font-size:1.07rem; }
+    .amount-inr { color: #319e18; font-weight: bold; }
+    .amount-usd { color: #1a60a8; font-weight: bold; }
+    .broker-label { font-weight: bold; color: #369; font-size:1.1em;}
+    .sector-label {font-weight: bold; color: #c88400;}
+  </style>
+</head>
+<body>
+  <div class="banner">Personal Stock Dashboard</div>
+  <div class="vis-container">
+    <div class="chart-wrapper" style="width:340px;">
+      <canvas id="pieChart"></canvas>
+    </div>
+    <div class="chart-wrapper" style="width:420px;">
+      <canvas id="barChart"></canvas>
+    </div>
+  </div>
+  <div id="modal" style="display:none"></div>
+  <script>
+    // ↓↓↓ EDIT THIS: Use your own Google Sheet Public CSV link
+    const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRK7QVx_eTJgum757p-jHYj6QbN6VYwGS6DxdDSMxI-m4kw7afsIYruU-jTqvMOZEnmYDRm6NEwVm_l/pub?output=csv";
+    //-----------------------------------------------------------
+    function numberWithCommas(x){ return parseInt(x).toLocaleString('en-IN'); }
+    function stockAmountCell(stock){
+      return stock.Country==="India"
+        ? `<span class="amount-inr">₹${numberWithCommas(stock.Quantity*stock.Price)}</span>`
+        : `<span class="amount-usd">$${numberWithCommas(stock.Quantity*stock.Price)}</span>`;
+    }
+    function groupBySector(stocks){
+      const sectorMap = {};
+      stocks.filter(s=>s.Country==="India").forEach(s=>{
+        if(!sectorMap[s.Sector]) sectorMap[s.Sector]=0;
+        sectorMap[s.Sector]+= s.Quantity*s.Price;
+      });
+      return sectorMap;
+    }
+    function showBrokerStocks(broker, allStocks){
+      const stocks = allStocks.filter(s => s.Broker === broker);
+      const country = stocks.length ? stocks[0].Country : "";
+      let html = `<div class='stock-table-container'>
+        <button class='btn-close' style='float:right' onclick='closeModal()'>✕</button>
+        <div class='broker-label'>${broker} (${country})</div>
+        <table>
+          <tr>
+            <th>Symbol</th>
+            <th>Quantity</th>
+            <th>Price</th>
+            <th>Total</th>
+            ${country==="India" ? '<th class="sector-label">Sector</th>' : ""}
+          </tr>
+          ${stocks.map(s=>
+            `<tr>
+              <td>${s.Symbol}</td>
+              <td>${numberWithCommas(s.Quantity)}</td>
+              <td>${country==='India' ? '₹'+numberWithCommas(s.Price) : '$'+numberWithCommas(s.Price)}</td>
+              <td>${stockAmountCell(s)}</td>
+              ${country==='India' ? `<td>${s.Sector}</td>` : ""}
+            </tr>`
+          ).join('')}
+        </table>
+      </div>`;
+      document.getElementById('modal').innerHTML = `<div class="stock-list-modal">${html}</div>`;
+      document.getElementById('modal').style.display = '';
+    }
+    function closeModal(){ document.getElementById('modal').style.display = 'none'; }
+    fetch(SHEET_URL)
+      .then(resp => resp.text())
+      .then(csv => {
+        // Uncomment for debugging: console.log(csv);
+        const lines = csv.trim().split('\n');
+        const headers = lines[0].split(',').map(h => h.trim());
+        const stocks = lines.slice(1).map(line=>{
+          // Handles quoted commas too:
+          const vals = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+          let obj = {};
+          headers.forEach((h,i)=>obj[h]= vals[i] ? vals[i].replace(/^"|"$/g, '') : "");
+          obj['Quantity'] = Number(obj['Quantity']);
+          obj['Price'] = Number(obj['Price']);
+          return obj;
+        });
+        // PIE CHART (Brokers)
+        const brokers = [...new Set(stocks.map(s=>s.Broker))];
+        const pieLabels = brokers;
+        const pieData = brokers.map(broker => stocks.filter(s=>s.Broker===broker).reduce((sum,s)=>sum+s.Quantity*s.Price,0));
+        const pieColors = ["#ffcf44","#7ecbff","#e67676"];
+        const pieChart = new Chart(document.getElementById('pieChart').getContext('2d'),{
+          type:'pie',
+          data:{
+            labels: pieLabels,
+            datasets:[{ data: pieData, backgroundColor: pieColors }]
+          },
+          options:{
+            plugins: {
+              legend: { position:'bottom', labels:{font:{weight:'bold'},color:'#444'}}
+            },
+            onClick: (evt,item,ctx) => {
+              const points = ctx.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+              if(points.length){
+                showBrokerStocks(brokers[points[0].index], stocks);
+              }
+            }
+          }
+        });
+        // BAR CHART (Indian stocks by Sector)
+        const sectorMap = groupBySector(stocks);
+        const barLabels = Object.keys(sectorMap);
+        const barData = Object.values(sectorMap);
+        const barColors = ["#47ac34","#ff9f2f","#31b1c1","#b468e0","#ff4d86"];
+        const barChart = new Chart(document.getElementById('barChart').getContext('2d'),{
+          type:'bar',
+          data:{
+            labels: barLabels,
+            datasets:[{
+              label:'Total Value (INR)',
+              data: barData,
+              backgroundColor: barColors,
+            }]
+          },
+          options:{
+            plugins: {
+              legend: {display:false},
+              tooltip:{ callbacks:{ label: ctx => ' ₹'+ numberWithCommas(ctx.parsed.y) } }
+            },
+            scales: {
+              y: {
+                beginAtZero:true,
+                ticks: { callback: val=> '₹'+numberWithCommas(val) }
+              }
+            }
+          }
+        });
+      });
+  </script>
+</body>
+</html>
