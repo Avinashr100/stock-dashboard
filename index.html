@@ -60,20 +60,20 @@
   </div>
   <div id="modal" style="display:none"></div>
   <script>
-    // ↓↓↓ EDIT THIS: Use your own Google Sheet Public CSV link
-    const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRK7QVx_eTJgum757p-jHYj6QbN6VYwGS6DxdDSMxI-m4kw7afsIYruU-jTqvMOZEnmYDRm6NEwVm_l/pub?output=csv";
-    //-----------------------------------------------------------
-    function numberWithCommas(x){ return parseInt(x).toLocaleString('en-IN'); }
+    // Google Sheet published as CSV
+    const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRK7QVx_eTJgum757p-jHYj6QbN6VYwGS6DxdDSMxI-m4kw7afsIYruU-jTqvMOZEnmYDRm6NEwVm_l/pub?gid=0&single=true&output=csv";
+
+    function numberWithCommas(x){ return Number(x).toLocaleString('en-IN'); }
     function stockAmountCell(stock){
-      return stock.Country==="India"
-        ? `<span class="amount-inr">₹${numberWithCommas(stock.Quantity*stock.Price)}</span>`
-        : `<span class="amount-usd">$${numberWithCommas(stock.Quantity*stock.Price)}</span>`;
+      return stock.Country === "India"
+        ? `<span class="amount-inr">₹${numberWithCommas(stock.Quantity * stock.Price)}</span>`
+        : `<span class="amount-usd">$${numberWithCommas(stock.Quantity * stock.Price)}</span>`;
     }
     function groupBySector(stocks){
       const sectorMap = {};
       stocks.filter(s=>s.Country==="India").forEach(s=>{
         if(!sectorMap[s.Sector]) sectorMap[s.Sector]=0;
-        sectorMap[s.Sector]+= s.Quantity*s.Price;
+        sectorMap[s.Sector] += s.Quantity*s.Price;
       });
       return sectorMap;
     }
@@ -106,27 +106,41 @@
       document.getElementById('modal').style.display = '';
     }
     function closeModal(){ document.getElementById('modal').style.display = 'none'; }
+
     fetch(SHEET_URL)
       .then(resp => resp.text())
       .then(csv => {
-        // Uncomment for debugging: console.log(csv);
-        const lines = csv.trim().split('\n');
+        // Parse CSV robustly (accepts quoted commas, trims, and ignores empty rows)
+        const lines = csv.trim().split('\n').filter(l => l.trim().length > 0);
         const headers = lines[0].split(',').map(h => h.trim());
         const stocks = lines.slice(1).map(line=>{
-          // Handles quoted commas too:
-          const vals = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+          // Properly handle quoted values with commas
+          const vals = [];
+          let i = 0, field = "", inQuotes = false;
+          for (let c of line) {
+            if (c === '"' && !inQuotes) { inQuotes = true; continue; }
+            if (c === '"' && inQuotes) { inQuotes = false; continue; }
+            if (c === ',' && !inQuotes) { vals.push(field); field = ""; continue; }
+            field += c;
+          }
+          vals.push(field);
+          // Map to object
           let obj = {};
-          headers.forEach((h,i)=>obj[h]= vals[i] ? vals[i].replace(/^"|"$/g, '') : "");
+          headers.forEach((h,idx)=>obj[h]=vals[idx]?vals[idx].trim():"");
           obj['Quantity'] = Number(obj['Quantity']);
           obj['Price'] = Number(obj['Price']);
           return obj;
-        });
-        // PIE CHART (Brokers)
+        }).filter(s => !!s.Broker && !!s.Symbol && !isNaN(s.Quantity) && !isNaN(s.Price));
+
+        // Pie chart: portfolio by broker
         const brokers = [...new Set(stocks.map(s=>s.Broker))];
         const pieLabels = brokers;
-        const pieData = brokers.map(broker => stocks.filter(s=>s.Broker===broker).reduce((sum,s)=>sum+s.Quantity*s.Price,0));
-        const pieColors = ["#ffcf44","#7ecbff","#e67676"];
-        const pieChart = new Chart(document.getElementById('pieChart').getContext('2d'),{
+        const pieData = brokers.map(broker =>
+          stocks.filter(s=>s.Broker===broker)
+                .reduce((sum,s)=>sum+s.Quantity*s.Price,0)
+        );
+        const pieColors = ["#ffcf44","#7ecbff","#e67676","#6a4c93","#47ac34","#ff4d86"];
+        new Chart(document.getElementById('pieChart').getContext('2d'),{
           type:'pie',
           data:{
             labels: pieLabels,
@@ -144,12 +158,13 @@
             }
           }
         });
-        // BAR CHART (Indian stocks by Sector)
+
+        // Bar chart: Indian stocks by sector
         const sectorMap = groupBySector(stocks);
         const barLabels = Object.keys(sectorMap);
         const barData = Object.values(sectorMap);
-        const barColors = ["#47ac34","#ff9f2f","#31b1c1","#b468e0","#ff4d86"];
-        const barChart = new Chart(document.getElementById('barChart').getContext('2d'),{
+        const barColors = ["#47ac34","#ff9f2f","#31b1c1","#b468e0","#ff4d86","#6a70d2"];
+        new Chart(document.getElementById('barChart').getContext('2d'),{
           type:'bar',
           data:{
             labels: barLabels,
@@ -172,6 +187,9 @@
             }
           }
         });
+      })
+      .catch(e => {
+        document.body.innerHTML += '<div style="padding:2em;color:#d00;font-weight:bold;">Failed to fetch Google Sheet. Please check your published link and Sheet structure.</div>';
       });
   </script>
 </body>
